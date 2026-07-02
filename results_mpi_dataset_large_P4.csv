@@ -1,0 +1,11 @@
+Task,Time_ms,Time_s
+BasicStatistics,1354.604,1.354604
+Histogram,89.059,0.089059
+Sort,9329.684,9.329684
+PearsonCorrelation,2466.619,2.466619
+MovingAverage,5078.094,5.078094
+OutlierDetection,498.194,0.498194
+Computation_Total,18816.254,18.816254
+Communication_Overhead,26502.728,26.502728
+Execution_Total,45318.982,45.318982
+Overhead_Percent,58.48,-
