@@ -4,10 +4,10 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
-#include <random>
 #include <iomanip>
 #include <numeric>
 #include <string>
+#include <sstream>
 
 using namespace std;
 
@@ -109,10 +109,12 @@ long long countOutliers(const vector<double> &v, double mean, double stddev)
 void writeCSV(const string &filename, int P, const Timings &tm)
 {
     ofstream f(filename);
-    f << "Task,Time_ms\n";
+    f << "Task,Time_ms,Time_s\n";
     auto row = [&](const string &name, double t)
     {
-        f << name << "," << fixed << setprecision(3) << t << "\n";
+        f << name << ","
+          << fixed << setprecision(3) << t << ","
+          << fixed << setprecision(6) << (t / 1000.0) << "\n";
     };
     row("BasicStatistics", tm.stats);
     row("Histogram", tm.histogram);
@@ -125,6 +127,33 @@ void writeCSV(const string &filename, int P, const Timings &tm)
     cout << "[LOG] Results -> " << filename << "\n";
 }
 
+bool loadDataset(const string &filename, vector<double> &dataA, vector<double> &dataB)
+{
+    ifstream file(filename);
+    if (!file.is_open())
+        return false;
+
+    string line;
+    while (getline(file, line))
+    {
+        if (line.empty())
+            continue;
+        replace(line.begin(), line.end(), ',', ' ');
+        stringstream ss(line);
+        double val1, val2;
+
+        if (ss >> val1)
+        {
+            dataA.push_back(val1);
+            if (ss >> val2)
+                dataB.push_back(val2);
+            else
+                dataB.push_back(val1);
+        }
+    }
+    return true;
+}
+
 int main(int argc, char *argv[])
 {
     MPI_Init(&argc, &argv);
@@ -132,10 +161,38 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &P);
 
-    long long N = 10000000LL;
-    if (argc >= 2)
-        N = atoll(argv[1]);
+    if (argc < 2)
+    {
+        if (rank == 0)
+            cerr << "Usage: mpiexec -n <P> " << argv[0] << " <dataset_filename.csv>\n";
+        MPI_Finalize();
+        return 1;
+    }
+
+    string filename = argv[1];
+    long long N = 0;
+    vector<double> fullA, fullB;
+
+    if (rank == 0)
+    {
+        if (!loadDataset(filename, fullA, fullB))
+        {
+            cerr << "[ERROR] Could not load dataset.\n";
+            N = -1;
+        }
+        else
+        {
+            N = fullA.size();
+        }
+    }
+
     MPI_Bcast(&N, 1, MPI_LONG_LONG_INT, 0, MPI_COMM_WORLD);
+
+    if (N <= 0)
+    {
+        MPI_Finalize();
+        return 1;
+    }
 
     vector<int> counts(P), displs(P);
     {
@@ -148,22 +205,9 @@ int main(int argc, char *argv[])
     }
     int myCount = counts[rank];
 
-    vector<double> fullA, fullB;
-    if (rank == 0)
-    {
-        fullA.resize(N);
-        fullB.resize(N);
-        mt19937_64 rng(42);
-        uniform_real_distribution<double> dist(0.0, 10000.0);
-        for (long long i = 0; i < N; i++)
-            fullA[i] = dist(rng);
-        mt19937_64 rng2(1234567890ULL);
-        for (long long i = 0; i < N; i++)
-            fullB[i] = dist(rng2);
-    }
-
     double commStart = MPI_Wtime();
     vector<double> chunkA(myCount), chunkB(myCount);
+
     MPI_Scatterv(rank == 0 ? fullA.data() : nullptr, counts.data(), displs.data(), MPI_DOUBLE,
                  chunkA.data(), myCount, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Scatterv(rank == 0 ? fullB.data() : nullptr, counts.data(), displs.data(), MPI_DOUBLE,
@@ -172,7 +216,7 @@ int main(int argc, char *argv[])
 
     MPI_Barrier(MPI_COMM_WORLD);
     double wallStart = MPI_Wtime();
-    double commAccum = (commEnd - commStart) * 1000.0; // scatter overhead
+    double commAccum = (commEnd - commStart) * 1000.0;
     Timings tm = {};
 
     // TASK 1 – Basic Statistics
@@ -196,9 +240,6 @@ int main(int argc, char *argv[])
     {
         gMean = gSum / gN;
         gStd = sqrt(gSum2 / gN - gMean * gMean);
-        cout << "[T1] Stats: mean=" << fixed << setprecision(4) << gMean
-             << "  stddev=" << gStd
-             << "  min=" << gMin << "  max=" << gMax << "\n";
     }
     MPI_Bcast(&gMean, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&gStd, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -214,8 +255,6 @@ int main(int argc, char *argv[])
     MPI_Reduce(lhist.data(), ghist.data(), BINS, MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
     tm.histogram = (MPI_Wtime() - ts) * 1000.0;
-    if (rank == 0)
-        cout << "[T2] Histogram: " << BINS << " bins done\n";
 
     // TASK 3 – Parallel Sample Sort
     MPI_Barrier(MPI_COMM_WORLD);
@@ -237,8 +276,6 @@ int main(int argc, char *argv[])
     }
     MPI_Barrier(MPI_COMM_WORLD);
     tm.sort_ = (MPI_Wtime() - ts) * 1000.0;
-    if (rank == 0)
-        cout << "[T3] Sort: merged " << N << " elements\n";
 
     MPI_Scatterv(rank == 0 ? fullA.data() : nullptr, counts.data(), displs.data(), MPI_DOUBLE,
                  chunkA.data(), myCount, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -257,12 +294,6 @@ int main(int argc, char *argv[])
     MPI_Reduce(&pl.n, &gnP, 1, MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
     tm.correlation = (MPI_Wtime() - ts) * 1000.0;
-    if (rank == 0)
-    {
-        double num = (double)gnP * gsXY - gsX * gsY;
-        double den = sqrt(((double)gnP * gsX2 - gsX * gsX) * ((double)gnP * gsY2 - gsY * gsY));
-        cout << "[T4] Pearson r = " << (den == 0 ? 0.0 : num / den) << "\n";
-    }
 
     // TASK 5 – Moving Average
     MPI_Barrier(MPI_COMM_WORLD);
@@ -276,8 +307,6 @@ int main(int argc, char *argv[])
                 MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
     tm.movingAvg = (MPI_Wtime() - ts) * 1000.0;
-    if (rank == 0)
-        cout << "[T5] Moving Average (window=100) done\n";
 
     // TASK 6 – Outlier Detection
     MPI_Barrier(MPI_COMM_WORLD);
@@ -287,8 +316,6 @@ int main(int argc, char *argv[])
     MPI_Reduce(&localOut, &globalOut, 1, MPI_LONG_LONG_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
     tm.outlier = (MPI_Wtime() - ts) * 1000.0;
-    if (rank == 0)
-        cout << "[T6] Outliers: " << globalOut << "\n";
 
     // ── Summary ──────────────────────────────
     MPI_Barrier(MPI_COMM_WORLD);
@@ -297,21 +324,44 @@ int main(int argc, char *argv[])
 
     if (rank == 0)
     {
-        cout << "\n========================================\n";
-        cout << " MPI Analytics Pipeline  P=" << P << "  N=" << N << "\n";
-        cout << "----------------------------------------\n";
-        cout << " T1 BasicStatistics  : " << fixed << setprecision(1) << tm.stats << " ms\n";
-        cout << " T2 Histogram        : " << tm.histogram << " ms\n";
-        cout << " T3 Sort             : " << tm.sort_ << " ms\n";
-        cout << " T4 Correlation      : " << tm.correlation << " ms\n";
-        cout << " T5 MovingAverage    : " << tm.movingAvg << " ms\n";
-        cout << " T6 OutlierDetection : " << tm.outlier << " ms\n";
-        cout << "----------------------------------------\n";
-        cout << " Comm Overhead       : " << tm.commOverhead << " ms\n";
-        cout << " TOTAL               : " << tm.total << " ms\n";
-        cout << "========================================\n\n";
+        cout << "\n\nSUMMARY OF EXECUTION TIMES FOR DATASET " << N << "\n";
+        cout << string(75, '-') << "\n";
+        cout << left << setw(35) << "Task"
+             << right << setw(15) << "Time (ms)"
+             << right << setw(20) << "Time (s)" << "\n";
+        cout << string(75, '-') << "\n";
 
-        string csvFile = "mpi_results_" + to_string(N) + ".csv";
+        // Helper lambda for formatted row printing
+        auto printRow = [&](const string &name, double ms)
+        {
+            cout << left << setw(35) << name
+                 << right << setw(15) << fixed << setprecision(3) << ms
+                 << right << setw(20) << fixed << setprecision(6) << (ms / 1000.0) << "\n";
+        };
+
+        printRow("1. Basic Statistics", tm.stats);
+        printRow("2. Histogram Generation", tm.histogram);
+        printRow("3. Parallel Sample Sort", tm.sort_);
+        printRow("4. Pearson Correlation", tm.correlation);
+        printRow("5. Moving Average", tm.movingAvg);
+        printRow("6. Z-Score Outliers Detection", tm.outlier);
+
+        cout << string(75, '-') << "\n";
+
+        cout << "Time Taken (Total Analytical Time)               : "
+             << fixed << setprecision(3) << tm.total << " ms ("
+             << fixed << setprecision(6) << (tm.total / 1000.0) << " s)\n";
+
+        cout << "Overall Comm Overhead (Total Communication Time) : "
+             << fixed << setprecision(3) << tm.commOverhead << " ms ("
+             << fixed << setprecision(6) << (tm.commOverhead / 1000.0) << " s)\n";
+
+        cout << string(75, '=') << "\n\n";
+
+        size_t lastdot = filename.find_last_of(".");
+        string baseName = (lastdot == string::npos) ? filename : filename.substr(0, lastdot);
+        string csvFile = "results_mpi_" + baseName + "_P" + to_string(P) + ".csv";
+
         writeCSV(csvFile, P, tm);
     }
 
