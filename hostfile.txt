@@ -1,0 +1,4 @@
+192.168.1.174 # Member 1 (Master)
+192.168.1.15 # Member 2 (Worker)
+192.168.1.207 # Member 3 (Worker)
+192.168.1.148 # Member 4 (Worker)
