@@ -382,9 +382,10 @@ int main(int argc, char *argv[])
         cout << "\nOverhead Percentage              : " << fixed << setprecision(2) << tm.overheadPct << " %\n";
         cout << string(75, '=') << "\n\n";
 
-        // Generate clean result filename
-        size_t lastdot = filename.find_last_of(".");
-        string baseName = (lastdot == string::npos) ? filename : filename.substr(0, lastdot);
+        size_t lastSlash = filename.find_last_of("\\/");
+        string justName = (lastSlash == string::npos) ? filename : filename.substr(lastSlash + 1);
+        size_t lastdot = justName.find_last_of(".");
+        string baseName = (lastdot == string::npos) ? justName : justName.substr(0, lastdot);
         string csvFile = "results_mpi_" + baseName + "_P" + to_string(P) + ".csv";
         
         writeCSV(csvFile, P, tm);
