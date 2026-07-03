@@ -1,8 +1,8 @@
 Task,Time_ms,Time_s
-BasicStatistics,78.877,0.078877
-Histogram,79.704,0.079704
-Sort,2574.652,2.574652
-PearsonCorrelation,160.464,0.160464
-MovingAverage,132.833,0.132833
-OutlierDetection,63.330,0.063330
-TOTAL,3089.860,3.089860
+BasicStatistics,7.816,0.007816
+Histogram,12.130,0.012130
+Sort,723.735,0.723735
+PearsonCorrelation,0.000,0.000000
+MovingAverage,22.967,0.022967
+OutlierDetection,0.000,0.000000
+TOTAL,766.648,0.766648
